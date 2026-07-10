@@ -12,6 +12,8 @@
 <meta name="apple-mobile-web-app-title" content="武將選秀">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon-192.png">
+<!-- 連線設定：獨立檔案，更新網頁時不會被覆蓋。沒有這個檔案就是單機模式 -->
+<script src="config.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;900&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -417,13 +419,13 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
 
 <script>
 /* ╔══════════════════════════════════════════════════════════╗
-   ║  連線設定（Firebase）── 由主持人填入，留空 = 單機模式        ║
+   ║  連線設定讀自外部檔案 config.js（更新本檔時不會被覆蓋）      ║
+   ║  沒有 config.js 或值留空 = 單機模式                          ║
    ║  設定方法見「連線版設定指南.md」                             ║
    ╚══════════════════════════════════════════════════════════╝ */
-const FIREBASE_CONFIG = {
-  apiKey: "",            // ← 貼上你的 Firebase 專案設定
-  databaseURL: "",       // ← 例如 https://xxxx-default-rtdb.asia-southeast1.firebasedatabase.app
-};
+const FIREBASE_CONFIG = (typeof SAN11_CONFIG !== "undefined" && SAN11_CONFIG)
+  ? SAN11_CONFIG
+  : { apiKey: "", databaseURL: "" };
 
 /* ══ 武將資料（由 build_draft_ui.py 注入）══
    欄位: [姓名, 編號(數字或null), 類別(''|'38R'|'蘿蔔'|'瑜雲'), 相性,
@@ -454,7 +456,7 @@ function canDraftNow(){
   return t!==null && mySeat()===t;
 }
 function netStatusText(){
-  if(!NET.on) return "單機模式";
+  if(!NET.on) return FIREBASE_CONFIG.apiKey ? "單機模式（未進房間）" : "單機模式";
   const s = mySeat();
   return `房間 ${NET.room}・${NET.isHost?"主持人":"玩家"}${NET.myName?"・"+NET.myName:""}${s!==null?"・座位:"+(S.teams[s]?.name??s):""}`;
 }
@@ -506,7 +508,7 @@ function netDraft(newState, expectLen, okMsg){
 async function netConnect(){
   if(NET.db) return true;
   if(!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.databaseURL){
-    toast("尚未填入 Firebase 設定（見連線版設定指南）"); return false;
+    toast("找不到連線設定：請確認 config.js 與網頁放在一起且已填入資料"); return false;
   }
   $("#netstatus").textContent = "連線中…";
   try{
