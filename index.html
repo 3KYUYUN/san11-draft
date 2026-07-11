@@ -864,6 +864,7 @@ function renderTeams(){
     tm.picks = tm.picks.filter(x=>x!==o);
     if(tm.lord===o) tm.lord = tm.picks[0] ?? null;
     delete S.cityOf[o];
+    delete S.skillOf[o];               // 瑜雲武將退回後恢復可自選特技
     S.history = S.history.filter(h=>!(h.t===t&&h.o===o));
     toast(DATA[o][0]+" 退回武將池"); sync();
   }));
@@ -1121,7 +1122,8 @@ $("#sReset").addEventListener("click",()=>{
   if(!confirm("清空所有隊伍名單，重新開始？"))return;
   const names = S.teams.map(t=>t.name);
   S.teams = defaultTeams(S.teams.length).map((t,i)=>({...t,name:names[i]}));
-  S.history = []; closeDlg("dlgSettings"); sync();
+  S.history = []; S.skillOf = {}; S.cityOf = {};
+  closeDlg("dlgSettings"); sync();
 });
 
 /* ══ 匯出 ══ */
