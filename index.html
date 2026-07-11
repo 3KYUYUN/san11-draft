@@ -197,6 +197,10 @@ h1 .sub{font-size:12px;letter-spacing:2px;color:var(--text-dim);font-family:var(
 .team .tname{font-family:var(--serif);font-weight:700;font-size:15px;color:var(--gold-bright);letter-spacing:1px;
   background:none;border:none;border-bottom:1px dashed transparent;width:90px}
 .team .tname:focus{outline:none;border-bottom-color:var(--gold)}
+.descbtn{width:22px;height:22px;flex-shrink:0;background:var(--ink);border:1px solid var(--bronze-dim);
+  color:var(--text-dim);font-size:12px;border-radius:2px;padding:0;font-family:var(--serif)}
+.descbtn:hover{border-color:var(--gold);color:var(--gold-bright)}
+.descbtn.has{border-color:var(--gold);color:var(--gold)}
 .team .tstat{margin-left:auto;font-size:11px;color:var(--text-dim);text-align:right;line-height:1.5}
 .team .tcity{display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px;font-size:12px;color:var(--text-dim);margin-bottom:6px}
 .team .tcity input{background:var(--ink);border:1px solid var(--bronze-dim);color:var(--text);
@@ -330,6 +334,16 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
     </table></div>
   </section>
 </div>
+
+<dialog id="dlgDesc">
+  <h2>勢力介紹</h2>
+  <p class="note">顯示在遊戲選擇勢力畫面的「解說」欄。<span id="descTeam" style="color:var(--gold-bright)"></span></p>
+  <textarea id="descText" maxlength="184" style="min-height:100px" placeholder="介紹你的勢力…（最多約 184 個中文字）"></textarea>
+  <div class="dbtns">
+    <button class="btn seal" id="descSave">儲存</button>
+    <button class="btn" id="descClose">取消</button>
+  </div>
+</dialog>
 
 <dialog id="dlgSkill">
   <h2>選擇特技</h2>
@@ -544,6 +558,7 @@ function normalizeState(s){
     if(t.capital===undefined) t.capital = null;
     if(t.lord===undefined) t.lord = null;
     if(t.colorIdx===undefined) t.colorIdx = i;
+    if(t.desc===undefined) t.desc = "";
     if(!t.name) t.name = "隊"+(i+1);
   });
   return s;
@@ -684,7 +699,7 @@ const takenBy = () => {const m={};S.teams.forEach((tm,t)=>tm.picks.forEach(o=>m[
 
 function defaultTeams(n){
   const base = ["一","二","三","四","五","六","七","八"];
-  return Array.from({length:n},(_,i)=>({name:"第"+base[i]+"隊", cities:[], capital:null, colorIdx:i, picks:[], lord:null}));
+  return Array.from({length:n},(_,i)=>({name:"第"+base[i]+"隊", cities:[], capital:null, colorIdx:i, desc:"", picks:[], lord:null}));
 }
 
 /* ══ 回合引擎 ══ */
@@ -807,6 +822,7 @@ function renderTeams(){
       <div class="thead">
         <button class="tdot" data-i="${i}" title="選擇勢力色" style="background:${teamColor(i)}"></button>
         <input class="tname" value="${tm.name}" data-i="${i}">
+        <button class="descbtn${tm.desc?' has':''}" data-i="${i}" title="勢力介紹">介</button>
         <div class="tstat">${tm.picks.length}／${S.rosterSize} 人<br>${S.budgetOn? `額度 ${spent}／${S.budget}` : `價格計 ${spent}`}</div>
       </div>
       ${seatline}
@@ -821,6 +837,11 @@ function renderTeams(){
   }));
   wrap.querySelectorAll(".claim").forEach(el=>el.addEventListener("click",e=>{
     claimSeat(+e.target.dataset.i);
+  }));
+  wrap.querySelectorAll(".descbtn").forEach(el=>el.addEventListener("click",e=>{
+    const i = +e.target.dataset.i;
+    if(!canEditTeam(i)){ toast("只能編輯自己的隊伍"); return; }
+    openDescEditor(i);
   }));
   wrap.querySelectorAll(".team").forEach(el=>el.addEventListener("click",e=>{
     if(e.target.closest("input,button,.chip,.citychip,.assignrow")) return;
@@ -869,6 +890,21 @@ function renderTeams(){
     toast(DATA[o][0]+" 退回武將池"); sync();
   }));
 }
+
+/* ══ 勢力介紹 ══ */
+let descTarget = 0;
+function openDescEditor(i){
+  descTarget = i;
+  $("#descTeam").textContent = "── " + S.teams[i].name;
+  $("#descText").value = S.teams[i].desc || "";
+  openDlg("dlgDesc");
+}
+$("#descSave").addEventListener("click",()=>{
+  S.teams[descTarget].desc = $("#descText").value.trim();
+  closeDlg("dlgDesc"); sync();
+  toast("已儲存勢力介紹");
+});
+$("#descClose").addEventListener("click",()=>closeDlg("dlgDesc"));
 
 /* ══ 勢力色選擇 ══ */
 let colorTarget = 0;
@@ -1226,6 +1262,7 @@ function buildIni(){
     out.push(`[勢力${i+1}]　# ${tm.name}`);
     out.push(`君主 = ${officerToken(DATA[lord], lord)}`);
     out.push(`旗色 = ${tm.colorIdx ?? i}`);
+    if(tm.desc) out.push(`介紹 = ${tm.desc.replace(/\n/g," ")}`);
     if(!cityOrder.length){ out.push(`城市 = （請填城市）`); out.push(""); return; }
     cityOrder.forEach((c,k)=>{
       const suf = k===0? "" : String(k+1);
@@ -1421,6 +1458,7 @@ const ENG = {
   A_BASE:0x2618C, A_STRIDE:8,
   C_ANCHOR:0x26305, C_STRIDE:81,
   PREVIEW:0x1DB, H_TITLE:0x5F, H_TITLE_LEN:17, H_INTRO:0x70, H_INTRO_LEN:363, H_YEAR:0x5B, H_MONTH:0x5D,
+  F_DESC:0x2AE, F_DESC_LEN:0x171,
   RESERVED_LO:832, RESERVED_HI:849, CLEAN:832,
 };
 const COMPOUND = ["歐陽","司馬","諸葛","夏侯","公孫","皇甫","長孫","公輸","東方","西門","上官","尉遲","令狐","太史","淳于","鍾離","南宮","申屠","呼延","徐周"];
@@ -1506,6 +1544,9 @@ function buildScenario(opts){
     }
   }
 
+  // 清空模版殘留的全部勢力解說
+  buf.fill(0, ENG.F_DESC, ENG.F_DESC + 42*ENG.F_DESC_LEN);
+
   // ── 自訂武將欄位分配 ──
   const drafted = new Set();
   teams.forEach(t=>t.picks.forEach(o=>{ if(DATA[o][1]!==null) drafted.add(DATA[o][1]); }));
@@ -1568,6 +1609,11 @@ function buildScenario(opts){
     if(opts.techP) wr16(buf, fbase+F_TECHP, Math.max(0, Math.min(65535, opts.techP)));
     const abase = E.A_BASE + f*E.A_STRIDE;
     buf[abase] = f; wr16(buf, abase+2, oidOf(lord));
+    // 勢力介紹（清零舊殘留後寫入）
+    const desc = (tm.desc||"").trim();
+    const db = big5Encode(desc);
+    if(db.length > E.F_DESC_LEN-1) throw new Error(tm.name+" 的勢力介紹過長（最多約 184 個中文字）");
+    writeField(buf, E.F_DESC + f*E.F_DESC_LEN, E.F_DESC_LEN, db);
     // 城市
     tm.cities.forEach(c=>{
       const cb = E.C_ANCHOR + c*E.C_STRIDE;
@@ -1666,6 +1712,7 @@ if(location.protocol === "file:"){
   S.teams.forEach((t,i)=>{ 
     if(t.colorIdx===undefined) t.colorIdx = i;
     if(t.capital===undefined) t.capital = null;
+    if(t.desc===undefined) t.desc = "";
     if(!Array.isArray(t.cities)){
     const c = CITIES.findIndex(x=>x[0]===(t.city||"").trim());
     t.cities = c>=0 ? [c] : []; delete t.city;
