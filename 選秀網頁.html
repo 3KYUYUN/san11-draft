@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <title>三國志11 PVP 武將選秀</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1c2f27">
@@ -136,6 +136,7 @@ h1 .sub{font-size:12px;letter-spacing:2px;color:var(--text-dim);font-family:var(
 }
 /* 觸控裝置：hover 效果不黏住 */
 @media (hover:none){
+  dialog input, dialog select, dialog textarea{font-size:16px !important}
   tbody tr:hover{background:none}
   .btn:hover{border-color:var(--bronze);color:var(--text)}
 }
@@ -312,7 +313,7 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
       <label class="tog"><input type="checkbox" id="fRadish">蘿蔔</label>
       <label class="tog"><input type="checkbox" id="fYuyun">瑜雲</label>
       <span style="width:8px"></span>
-      <label class="tog"><input type="checkbox" id="fFemaleOnly">只看女</label>
+      <label class="tog"><input type="checkbox" id="fFemaleOnly">女</label>
       <button class="btn" id="sortClear" style="padding:4px 10px;font-size:12px">清除排序</button>
       <span id="count"></span>
     </div>
@@ -399,6 +400,7 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
     <button class="btn" id="sShuffle">隨機洗牌順位</button>
     <button class="btn" id="sApply">套用（重排順位不清名單）</button>
     <button class="btn seal" id="sReset">全部重來</button>
+    <button class="btn" id="sClose">關閉</button>
   </div>
   <p class="note">套用後選秀順序立即重算；「全部重來」會清空所有隊伍名單。</p>
 </dialog>
@@ -446,6 +448,7 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
   </details>
   <div class="dbtns" style="justify-content:flex-start">
     <button class="btn seal" id="exMake">⚔ 一鍵製作劇本檔（.s11）</button>
+    <button class="btn" id="exLog">下載選秀紀錄</button>
   </div>
   <details style="margin-top:8px">
     <summary style="cursor:pointer;color:var(--text-dim);font-size:12px">進階：make_scenario.py 設定檔</summary>
@@ -731,12 +734,17 @@ function closeDlg(id){
   const d = document.getElementById(id);
   if(!d) return;
   try{ d.close(); }catch(e){}
-  if(d.open){ d.removeAttribute("open"); d.style.display = "none"; }   // fallback
+  d.removeAttribute("open");
+  d.style.display = "none";
 }
 function openDlg(id){
   const d = document.getElementById(id);
+  if(!d) return;
+  try{ d.close(); }catch(e){}          // 先清掉任何卡住的狀態
+  d.removeAttribute("open");
   d.style.display = "";
-  try{ d.showModal(); }catch(e){ d.setAttribute("open",""); }
+  try{ d.showModal(); }
+  catch(e){ d.setAttribute("open",""); }
 }
 function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),1600);}
 
@@ -1107,6 +1115,7 @@ function applySettings(){
   toast(`已套用：每輪 ${S.picksPerTurn} 名・共 ${S.rosterSize} 人`);
 }
 $("#sApply").addEventListener("click", applySettings);
+$("#sClose").addEventListener("click", ()=>closeDlg("dlgSettings"));
 $("#sReset").addEventListener("click",()=>{
   if(!isHost()){ toast("只有主持人可以重置"); return; }
   if(!confirm("清空所有隊伍名單，重新開始？"))return;
@@ -1134,6 +1143,50 @@ function iniTechLine(){
   const p = +($("#exTechP")?.value||0);
   if(p) lines.push("技巧P = " + p);
   return lines;
+}
+function buildDraftLog(){
+  const modeTxt = {snake:"蛇形", linear:"順序"}[S.mode] || S.mode;
+  const phaseTxt = {draftOnly:"只選秀", cityFirst:"先選城再選秀", merged:"同輪選城＋選秀"}[S.phaseMode] || S.phaseMode;
+  const out = [];
+  out.push("═══ 三國志11 武將選秀紀錄 ═══");
+  out.push("時間：" + new Date().toLocaleString("zh-TW"));
+  const nm = $("#exName") ? $("#exName").value.trim() : "";
+  if(nm) out.push("劇本：" + nm);
+  out.push(`設定：${modeTxt}選秀・${phaseTxt}・每輪 ${S.picksPerTurn} 名・每隊 ${S.rosterSize} 人` +
+    (S.budgetOn? `・額度上限 ${S.budget}`:"") + `・價格欄位：${PRICE_COLS.find(p=>p[1]===S.priceCol)?.[0]??""}`);
+  out.push("");
+  out.push("── 選秀過程 ──");
+  const cnt = S.teams.map(()=>0);
+  S.history.forEach((h,i)=>{
+    const tm = S.teams[h.t];
+    if(h.c !== undefined){
+      out.push(`${String(i+1).padStart(3)}. ${tm.name}　取得城市【${CITIES[h.c][0]}】`);
+    }else{
+      cnt[h.t]++;
+      const d = DATA[h.o], price = +d[S.priceCol]||0;
+      const sk = S.skillOf[h.o] ? "・特技"+S.skillOf[h.o] : "";
+      out.push(`${String(i+1).padStart(3)}. ${tm.name}　第${cnt[h.t]}選　${d[0]}（價格${price}${sk}）`);
+    }
+  });
+  out.push("");
+  out.push("── 各隊總覽 ──");
+  S.teams.forEach((tm,i)=>{
+    if(!tm.picks.length && !tm.cities.length) return;
+    const seat = NET.on && NET.seats[i] ? "（"+NET.seats[i].name+"）" : "";
+    const spent = tm.picks.reduce((s,o)=>s+(+DATA[o][S.priceCol]||0),0);
+    out.push(`◆ ${tm.name}${seat}　${tm.picks.length}人・價格計 ${spent}`);
+    const cap = tm.capital ?? tm.cities[0];
+    out.push("  城市：" + tm.cities.map(c=>(c===cap?"【都】":"")+CITIES[c][0]).join("、"));
+    const lord = tm.lord ?? tm.picks[0];
+    out.push("  名單：" + tm.picks.map(o=>{
+      const d = DATA[o];
+      const tags = [(o===lord?"君":""), S.skillOf[o]||"",
+        (S.cityOf[o]!==undefined && tm.cities.includes(S.cityOf[o]) ? "駐"+CITIES[S.cityOf[o]][0] : "")].filter(Boolean);
+      return d[0] + (tags.length? "("+tags.join("/")+")" : "");
+    }).join("、"));
+    out.push("");
+  });
+  return out.join("\n");
 }
 function buildIni(){
   let warn = [];
@@ -1256,6 +1309,12 @@ $("#exCopy").addEventListener("click",()=>{navigator.clipboard.writeText($("#exI
 $("#exDl").addEventListener("click",()=>{
   const blob = new Blob(["\ufeff"+$("#exIni").value],{type:"text/plain;charset=utf-8"});
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="設定檔.txt"; a.click();
+});
+$("#exLog").addEventListener("click",()=>{
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\ufeff"+buildDraftLog()],{type:"text/plain;charset=utf-8"}));
+  a.download = ($("#exName").value.trim()||"選秀") + "紀錄.txt";
+  a.click();
 });
 $("#exClose").addEventListener("click",()=>closeDlg("dlgExport"));
 
