@@ -519,8 +519,7 @@ const FIREBASE_CONFIG = (typeof SAN11_CONFIG !== "undefined" && SAN11_CONFIG)
   ? SAN11_CONFIG
   : { apiKey: "", databaseURL: "" };
 const TG = {
-  token: FIREBASE_CONFIG.tgToken || "",   // 直連模式（token 公開，僅限私人社群）
-  proxy: FIREBASE_CONFIG.tgProxy || "",   // 代理模式（建議）：token 藏在代理伺服器
+  token: FIREBASE_CONFIG.tgToken || "",
   chat:  FIREBASE_CONFIG.tgChat  || "",
 };
 
@@ -631,8 +630,8 @@ async function netConnect(){
   $("#netstatus").textContent = "連線中…";
   try{
     await new Promise((res,rej)=>{
-      let n=0; const done=()=>{ if(++n===3) res(); };
-      for(const f of ["firebase-app-compat.js","firebase-database-compat.js","firebase-auth-compat.js"]){
+      let n=0; const done=()=>{ if(++n===2) res(); };
+      for(const f of ["firebase-app-compat.js","firebase-database-compat.js"]){
         const sc = document.createElement("script");
         sc.src = "https://www.gstatic.com/firebasejs/9.23.0/"+f;
         sc.onload = done; sc.onerror = ()=>rej(new Error("無法載入 Firebase（檢查網路）"));
@@ -640,9 +639,6 @@ async function netConnect(){
       }
     });
     firebase.initializeApp(FIREBASE_CONFIG);
-    // 匿名驗證：搭配「auth != null」規則，擋掉非本應用的裸連線
-    try{ await firebase.auth().signInAnonymously(); }
-    catch(e){ /* 未在後台啟用匿名驗證時仍可運作（規則須為公開） */ }
     NET.db = firebase.database();
     return true;
   }catch(e){ toast(e.message); $("#netstatus").textContent = "單機模式"; return false; }
@@ -656,22 +652,19 @@ function attachRoom(room){
     render();
   });
   NET.db.ref("rooms/"+room+"/seats").on("value", snap=>{
-    NET.seats = snap.val() || {};
-    autoRebindSeats();
-    render();
+    NET.seats = snap.val() || {}; render();
   });
   NET.db.ref("rooms/"+room+"/admins").on("value", snap=>{
     NET.admins = snap.val() || {}; render(); renderRoomUsers();
   });
   // 在線狀態：進房登記＋斷線自動移除＋每60秒心跳
   const pref = NET.db.ref("rooms/"+room+"/presence/"+CID);
-  const beat = ()=>pref.set({name: NET.myName || "玩家", ts: Date.now()});
-  beat();
+  pref.set({name: NET.myName || "玩家", ts: Date.now()});
   pref.onDisconnect().remove();
   if(NET._hb) clearInterval(NET._hb);
-  NET._hb = setInterval(beat, 30000);   // 心跳寫完整記錄：同代碼多裝置互刪節點後 30 秒內自動復原
+  NET._hb = setInterval(()=>pref.update({ts: Date.now()}), 60000);
   NET.db.ref("rooms/"+room+"/presence").on("value", snap=>{
-    NET.presence = snap.val() || {}; autoRebindSeats(); renderRoomUsers();
+    NET.presence = snap.val() || {}; renderRoomUsers();
   });
   $("#roomOffline").style.display = "none";
   $("#roomOnline").style.display = "block";
@@ -722,14 +715,7 @@ function leaveRoom(){
 let claimTarget = null;
 function claimSeat(i){
   const cur = NET.seats[i];
-  if(cur && cur.cid !== CID){
-    // 同暱稱＝同一人換了裝置或玩家代碼 → 重新綁定到目前裝置
-    if(cur.name && cur.name === (NET.myName||"")){
-      NET.db.ref("rooms/"+NET.room+"/seats/"+i).update({cid: CID});
-      toast("座位已重新綁定到這個裝置"); return;
-    }
-    if(!isPriv()){ toast("座位已被 "+cur.name+" 認領"); return; }
-  }
+  if(cur && cur.cid !== CID && !isPriv()){ toast("座位已被 "+cur.name+" 認領"); return; }
   if(cur){ NET.db.ref("rooms/"+NET.room+"/seats/"+i).remove(); return; }   // 再點一次/管理者 = 釋出
   claimTarget = i;
   $("#clTeam").textContent = S.teams[i]?.name || ("隊"+(i+1));
@@ -896,7 +882,7 @@ function renderTeams(){
     }).join("");
     const seat = NET.on ? (NET.seats[i] || null) : null;
     const seatline = NET.on ? `<div class="seatline">座位：${seat? `<b>${seat.name}</b>` : '<span style="opacity:.5">空</span>'}
-      <button class="claim" data-i="${i}">${seat? (seat.cid===CID?'釋出':(seat.name===(NET.myName||"")?'重新認領':'（已認領）')) : '認領'}</button></div>` : "";
+      <button class="claim" data-i="${i}">${seat? (seat.cid===CID?'釋出':'（已認領）') : '認領'}</button></div>` : "";
     div.innerHTML = `
       <div class="thead">
         <button class="tdot" data-i="${i}" title="選擇勢力色" style="background:${teamColor(i)}"></button>
@@ -1594,18 +1580,6 @@ function renderMap(){
 
 $("#sortClear").addEventListener("click",()=>{ sortKeys=[{k:17,asc:false}]; renderTable(); });
 
-/* 換裝置/換玩家代碼後：同暱稱且原裝置不在線的座位，自動跟到目前裝置 */
-function autoRebindSeats(){
-  if(!NET.on || !NET.myName) return;
-  for(const k in NET.seats){
-    const s = NET.seats[k];
-    if(s && s.name === NET.myName && s.cid !== CID && !NET.presence[s.cid]){
-      NET.db.ref("rooms/"+NET.room+"/seats/"+k).update({cid: CID});
-      toast(`已把「${S.teams[+k]?.name??k}」的座位跟到這個裝置`);
-    }
-  }
-}
-
 /* ══ 在線名單（主持人／管理員可見與管理）══ */
 function renderRoomUsers(){
   const box = $("#roomUsers");
@@ -1614,14 +1588,9 @@ function renderRoomUsers(){
   if(!isPriv()){ box.innerHTML = `<p class="note">目前在線：${cids.length} 人</p>`; return; }
   const seatOf = {};
   for(const k in NET.seats) if(NET.seats[k]) (seatOf[NET.seats[k].cid] ||= []).push(S.teams[+k]?.name ?? k);
-  const nameOfCid = cid=>{
-    if(NET.presence[cid] && NET.presence[cid].name) return NET.presence[cid].name;
-    for(const k in NET.seats) if(NET.seats[k] && NET.seats[k].cid===cid) return NET.seats[k].name;
-    return "?";
-  };
   box.innerHTML = `<p class="note" style="margin-bottom:4px">在線用戶（${cids.length}）：</p>` +
     cids.map(cid=>{
-      const u = {name: nameOfCid(cid)};
+      const u = NET.presence[cid];
       const badges = (NET.admins[cid]?'<span class="badge g">管理</span>':'') + (seatOf[cid]? ` <span class="badge c">${seatOf[cid].join("+")}</span>`:"");
       const btn = NET.isHost && cid!==CID ?
         `<button class="btn" style="padding:1px 8px;font-size:11px" data-adm="${cid}" data-nm="${u.name}">${NET.admins[cid]?"解除管理":"任命管理"}</button>` : "";
@@ -1643,18 +1612,11 @@ function tgNameOf(teamIdx){
   return S.teams[teamIdx]?.name ?? ("隊"+(teamIdx+1));
 }
 function tgSend(text){
-  if(S.tgNotify===false) return;
-  if(TG.proxy){
-    fetch(TG.proxy, {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({text, room: NET.room||""}),
-    }).catch(()=>{});
-  }else if(TG.token && TG.chat){
-    fetch("https://api.telegram.org/bot"+TG.token+"/sendMessage", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({chat_id: TG.chat, text}),
-    }).catch(()=>{});
-  }
+  if(!TG.token || !TG.chat || S.tgNotify===false) return;
+  fetch("https://api.telegram.org/bot"+TG.token+"/sendMessage", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({chat_id: TG.chat, text}),
+  }).catch(()=>{});
 }
 /* 動作提交後呼叫：prevT=剛完成動作的隊、what=動作描述 */
 function tgNotifyTurn(prevT, what){
