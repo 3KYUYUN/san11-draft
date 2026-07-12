@@ -12,6 +12,6 @@
    ╚═══════════════════════════════════════════════════════════════╝ */
 
 const SAN11_CONFIG = {
-  apiKey: "",
-  databaseURL: "",
+  apiKey: "AIzaSyCrKiXHlUcQZS9M4Ng2fk_H7L-3XFRhn3Y",
+  databaseURL: "https://pvp-draft-default-rtdb.asia-southeast1.firebasedatabase.app",
 };
