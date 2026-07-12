@@ -652,7 +652,9 @@ function attachRoom(room){
     render();
   });
   NET.db.ref("rooms/"+room+"/seats").on("value", snap=>{
-    NET.seats = snap.val() || {}; render();
+    NET.seats = snap.val() || {};
+    autoRebindSeats();
+    render();
   });
   NET.db.ref("rooms/"+room+"/admins").on("value", snap=>{
     NET.admins = snap.val() || {}; render(); renderRoomUsers();
@@ -664,7 +666,7 @@ function attachRoom(room){
   if(NET._hb) clearInterval(NET._hb);
   NET._hb = setInterval(()=>pref.update({ts: Date.now()}), 60000);
   NET.db.ref("rooms/"+room+"/presence").on("value", snap=>{
-    NET.presence = snap.val() || {}; renderRoomUsers();
+    NET.presence = snap.val() || {}; autoRebindSeats(); renderRoomUsers();
   });
   $("#roomOffline").style.display = "none";
   $("#roomOnline").style.display = "block";
@@ -715,7 +717,14 @@ function leaveRoom(){
 let claimTarget = null;
 function claimSeat(i){
   const cur = NET.seats[i];
-  if(cur && cur.cid !== CID && !isPriv()){ toast("座位已被 "+cur.name+" 認領"); return; }
+  if(cur && cur.cid !== CID){
+    // 同暱稱＝同一人換了裝置或玩家代碼 → 重新綁定到目前裝置
+    if(cur.name && cur.name === (NET.myName||"")){
+      NET.db.ref("rooms/"+NET.room+"/seats/"+i).update({cid: CID});
+      toast("座位已重新綁定到這個裝置"); return;
+    }
+    if(!isPriv()){ toast("座位已被 "+cur.name+" 認領"); return; }
+  }
   if(cur){ NET.db.ref("rooms/"+NET.room+"/seats/"+i).remove(); return; }   // 再點一次/管理者 = 釋出
   claimTarget = i;
   $("#clTeam").textContent = S.teams[i]?.name || ("隊"+(i+1));
@@ -882,7 +891,7 @@ function renderTeams(){
     }).join("");
     const seat = NET.on ? (NET.seats[i] || null) : null;
     const seatline = NET.on ? `<div class="seatline">座位：${seat? `<b>${seat.name}</b>` : '<span style="opacity:.5">空</span>'}
-      <button class="claim" data-i="${i}">${seat? (seat.cid===CID?'釋出':'（已認領）') : '認領'}</button></div>` : "";
+      <button class="claim" data-i="${i}">${seat? (seat.cid===CID?'釋出':(seat.name===(NET.myName||"")?'重新認領':'（已認領）')) : '認領'}</button></div>` : "";
     div.innerHTML = `
       <div class="thead">
         <button class="tdot" data-i="${i}" title="選擇勢力色" style="background:${teamColor(i)}"></button>
@@ -1579,6 +1588,18 @@ function renderMap(){
 }
 
 $("#sortClear").addEventListener("click",()=>{ sortKeys=[{k:17,asc:false}]; renderTable(); });
+
+/* 換裝置/換玩家代碼後：同暱稱且原裝置不在線的座位，自動跟到目前裝置 */
+function autoRebindSeats(){
+  if(!NET.on || !NET.myName) return;
+  for(const k in NET.seats){
+    const s = NET.seats[k];
+    if(s && s.name === NET.myName && s.cid !== CID && !NET.presence[s.cid]){
+      NET.db.ref("rooms/"+NET.room+"/seats/"+k).update({cid: CID});
+      toast(`已把「${S.teams[+k]?.name??k}」的座位跟到這個裝置`);
+    }
+  }
+}
 
 /* ══ 在線名單（主持人／管理員可見與管理）══ */
 function renderRoomUsers(){
