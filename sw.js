@@ -5,7 +5,7 @@
    - Firebase / Google 字型：不攔截，交給瀏覽器與 Firebase SDK 自行處理。
    改版時把 CACHE 的版本號 +1，舊快取會自動清掉。 */
 
-const CACHE = "san11-draft-v43";
+const CACHE = "san11-draft-v42";
 const SHELL = [
   "./",
   "./index.html",
