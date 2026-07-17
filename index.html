@@ -771,6 +771,11 @@ async function netConnect(){
 }
 
 function attachRoom(room){
+  // 進房即補登索引（transaction：已存在則不動；修復舊規則時期漏登的房間）
+  try{
+    NET.db.ref("roomsIndex/"+room).transaction(v => v || {label: room, created: Date.now()});
+  }catch(e){}
+
   NET.room = room; NET.on = true;
   NET.db.ref("rooms/"+room+"/state").on("value", snap=>{
     const v = snap.val();
@@ -2129,7 +2134,17 @@ function tgNameOf(teamIdx){
 }
 async function tgTest(){
   const label = TG.proxy ? "代理模式" : (TG.token && TG.chat ? "直連模式" : null);
-  if(!label){ toast("尚未設定：config.js 需填 tgProxy 或 tgToken＋tgChat"); return; }
+  if(!label){
+    // 分層診斷：指出卡在哪一層
+    if(typeof SAN11_CONFIG === "undefined" || !SAN11_CONFIG){
+      toast("✗ config.js 沒有載入（檔案不存在或有語法錯誤）：按 F12 看 Console 是否有紅字");
+    }else if(!("tgProxy" in SAN11_CONFIG) && !("tgToken" in SAN11_CONFIG)){
+      toast("✗ config.js 已載入但沒有 tg 設定欄位：伺服器上可能是舊版檔案——直接開「你的網址/config.js」確認內容");
+    }else{
+      toast("✗ config.js 已載入但 tgProxy／tgToken 是空值：確認填的值有存檔上傳，且填在 SAN11_CONFIG 物件的大括號內，然後重新整理");
+    }
+    return;
+  }
   try{
     let resp;
     if(TG.proxy){
@@ -2140,8 +2155,12 @@ async function tgTest(){
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({chat_id: TG.chat, text:"🔔 選秀網頁測試通知（"+label+"）"})});
     }
-    toast(resp.ok ? "✓ 測試通知已送出（"+label+"），到 Telegram 群組確認"
-                  : "✗ 送出失敗 HTTP "+resp.status+"：檢查 Worker 變數或 token/chat");
+    if(resp.ok){
+      toast("✓ 測試通知已送出（"+label+"），到 Telegram 群組確認");
+    }else{
+      let detail = ""; try{ detail = (await resp.text()).slice(0, 160); }catch(e){}
+      toast("✗ 送出失敗 HTTP "+resp.status+(detail? "：" + detail : "：檢查 Worker 變數或 token/chat"));
+    }
   }catch(e){ toast("✗ 連線失敗：" + e.message); }
 }
 function tgSend(text){
@@ -2186,11 +2205,19 @@ async function showRoomList(targetId){
   if(!await netConnect()) return;
   const box = $("#"+targetId);
   box.innerHTML = '<p class="note">載入中…</p>';
-  let idx = {};
-  try{ const snap = await NET.db.ref("roomsIndex").get(); idx = snap.val() || {}; }catch(e){}
+  let idx = {}, readErr = null;
+  try{ const snap = await NET.db.ref("roomsIndex").get(); idx = snap.val() || {}; }
+  catch(e){ readErr = e; }
   let mine = []; try{ mine = JSON.parse(localStorage.getItem("s11rooms")||"[]"); }catch(e){}
+  // 本機到過的房間併入清單（索引缺漏或權限異常時的後備）
+  mine.forEach(r=>{ if(!idx[r]) idx[r] = {label: r + "（本機記錄）", created: 0}; });
   const rooms = Object.keys(idx).sort((a,b)=>(idx[b].created||0)-(idx[a].created||0)).slice(0,30);
-  if(!rooms.length){ box.innerHTML = '<p class="note">目前沒有任何房間</p>'; return; }
+  if(readErr){
+    box.innerHTML = '<p class="note" style="color:var(--seal-bright)">⚠ 讀取房間列表失敗（' + esc(readErr.code||readErr.message||"權限") +
+      '）：請到 Firebase 主控台更新資料庫規則，補上 roomsIndex 的讀寫權限（見連線版設定指南）。</p>';
+    if(!rooms.length) return;
+  }else if(!rooms.length){ box.innerHTML = '<p class="note">目前沒有任何房間</p>'; return; }
+  if(readErr) box.innerHTML += '';
   const fmt = ts => ts? new Date(ts).toLocaleDateString("zh-TW",{month:"numeric",day:"numeric"}) : "";
   box.innerHTML = `<p class="note" style="margin-bottom:4px">房間列表：</p>` + rooms.map(r=>{
     const cur = r===NET.room, joined = mine.includes(r);
