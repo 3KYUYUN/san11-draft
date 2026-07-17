@@ -2177,18 +2177,51 @@ function tgSend(text){
     }).catch(()=>{});
   }
 }
+/* 前瞻：從當前回合起，累計輪到下一隊之前「同一隊」的總需求
+   （蛇形頭尾折返會連續兩輪 → 通知應寫總數，例如「選 2 名武將」）。
+   以深拷貝暫換全域 S 做虛擬推演，同步執行完畢即還原。 */
+function turnLookahead(){
+  const p0 = turnPlan();
+  if(p0 === null) return null;
+  const backup = S;
+  let cities = 0, picks = 0;
+  try{
+    S = JSON.parse(JSON.stringify(backup));
+    let q = turnPlan(), guard = 0;
+    while(q && q.t === p0.t && guard++ < 20){
+      if(q.needCity){
+        cities++;
+        let free = -1;
+        for(let c = 0; c < CITIES.length; c++){
+          if(!S.bannedCities.includes(c) && cityOwner(c) < 0){ free = c; break; }
+        }
+        if(free < 0) break;
+        S.teams[q.t].cities.push(free);
+        if(S.teams[q.t].capital == null) S.teams[q.t].capital = free;
+        if(S.history) S.history.push({t: q.t, c: free});
+      }
+      if(q.needPicks > 0){
+        for(let k = 0; k < q.needPicks; k++) S.teams[q.t].picks.push(-1);
+        picks += q.needPicks;
+      }
+      q = turnPlan();
+    }
+  }catch(e){ cities = p0.needCity ? 1 : 0; picks = p0.needPicks; }
+  finally{ S = backup; }
+  return {t: p0.t, cities, picks};
+}
 /* 動作提交後呼叫：prevT=剛完成動作的隊、what=動作描述 */
 function tgNotifyTurn(prevT, what){
   if(!NET.on) return;
   setTimeout(()=>{                       // 等監聽套用最新狀態再取下一位
-    const p = turnPlan();
-    if(p === null){
+    const la = turnLookahead();
+    if(la === null){
       tgSend(`${tgNameOf(prevT)} ${what}。選秀全部完成！`);
-    }else if(p.t !== prevT){
+    }else if(la.t !== prevT){
       const need = [];
-      if(p.needCity) need.push("選城");
-      if(p.needPicks>0) need.push(`選 ${p.needPicks} 名武將`);
-      tgSend(`${tgNameOf(prevT)} ${what}，輪到 ${tgNameOf(p.t)}（${need.join("＋")}）`);
+      if(la.cities) need.push(la.cities > 1 ? `選 ${la.cities} 座城` : "選城");
+      if(la.picks) need.push(`選 ${la.picks} 名武將`);
+      tgSend(`${tgNameOf(prevT)} ${what}，輪到 ${tgNameOf(la.t)}（${need.join("＋")}）`);
     }
   }, 800);
 }
