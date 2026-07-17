@@ -341,7 +341,22 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
 .note{font-size:12px;color:var(--text-dim);line-height:1.6;margin-top:8px}
 #chatbox{border-top:2px solid var(--bronze-dim);padding:8px;background:var(--panel)}
 #chathead{font-size:12px;color:var(--text-dim);letter-spacing:1px;margin-bottom:4px}
-#chatlist{max-height:170px;overflow-y:auto;font-size:13px;margin-bottom:6px}
+/* 留言區＝單列底欄；歷史面板覆蓋於其上方，不佔選秀版面 */
+#chatbox{position:relative}
+#chatpanel{display:none;position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;z-index:40;
+  background:var(--panel);border:1px solid var(--bronze-dim);border-radius:6px;padding:8px;
+  box-shadow:0 -6px 18px rgba(0,0,0,.5)}
+#chatbox.open #chatpanel{display:block}
+#chatrow{display:flex;gap:6px;align-items:center}
+#chatinput{flex:0 1 42%;min-width:96px}
+#chatlatest{flex:1 1 auto;min-width:0;font-size:12px;color:var(--text-dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#chatlatest b{color:var(--gold)}
+#chattoggle{flex-shrink:0;width:16px;height:16px;border-radius:50%;border:none;cursor:pointer;
+  background:var(--seal);box-shadow:0 0 0 2px var(--bronze-dim)}
+#chatbox.open #chattoggle{background:var(--gold)}
+#chattoggle:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+#chatlist{max-height:min(34vh,300px);overflow-y:auto;font-size:13px;margin-bottom:2px}
 #chatlist .cmsg{padding:2px 0;border-bottom:1px solid #1e2c25;word-break:break-all}
 #chatlist .cmsg b{color:var(--gold)}
 #chatlist .cmsg .ct{color:var(--text-dim);font-size:11px;margin-left:6px}
@@ -389,11 +404,15 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
     </div>
     <div id="teams"></div>
     <div id="chatbox" style="display:none">
-      <div id="chathead">留言區</div>
-      <div id="chatlist"></div>
+      <div id="chatpanel">
+        <div id="chathead">留言區</div>
+        <div id="chatlist"></div>
+      </div>
       <div id="chatrow">
         <input type="text" id="chatinput" maxlength="200" placeholder="快速留言…">
         <button class="btn" id="chatsend">送出</button>
+        <div id="chatlatest" title="最新留言"></div>
+        <button id="chattoggle" title="展開／收起留言" aria-label="展開留言"></button>
       </div>
     </div>
   </aside>
@@ -787,6 +806,10 @@ function attachRoom(room){
     el.innerHTML = `<b>${esc(m.n||"?")}</b><span class="ct">${t}</span><br>${esc(m.x||"")}`;
     $("#chatlist").appendChild(el);
     $("#chatlist").scrollTop = $("#chatlist").scrollHeight;
+    // 底欄同步最新一則
+    const last = el.cloneNode(true);
+    $("#chatlatest").innerHTML = "";
+    $("#chatlatest").appendChild(last);
   });
   $("#roomOffline").style.display = "none";
   $("#roomOnline").style.display = "block";
@@ -2485,6 +2508,10 @@ function sendChat(){
 }
 $("#chatsend").addEventListener("click", sendChat);
 $("#chatinput").addEventListener("keydown", e=>{ if(e.key==="Enter") sendChat(); });
+$("#chattoggle").addEventListener("click",()=>{
+  const open = $("#chatbox").classList.toggle("open");
+  if(open) $("#chatlist").scrollTop = $("#chatlist").scrollHeight;
+});
 
 /* ══ 完成選城／禁城模式 ══ */
 $("#btnCityDone").addEventListener("click",()=>{
