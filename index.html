@@ -541,6 +541,7 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
     <div><label>隊伍數（2~8）</label><input type="number" id="sTeams" min="2" max="8" value="8"></div>
     <div><label>每隊人數</label><input type="number" id="sRoster" min="1" max="30" value="15"></div>
     <div><label>每輪每隊選幾名</label><input type="number" id="sPerTurn" min="1" max="10" value="1"></div>
+    <div><label>每輪每隊選幾城（先選城／同輪模式）</label><input type="number" id="sCityPer" min="1" max="5" value="1"></div>
   </div>
   <label>選秀流程</label>
   <select id="sPhase">
@@ -701,6 +702,7 @@ function normalizeState(s){
   s.cityOf = s.cityOf || {};
   s.skillOf = s.skillOf || {};
   s.picksPerTurn = s.picksPerTurn || 1;
+  s.citiesPerTurn = s.citiesPerTurn || 1;
   s.phaseMode = s.phaseMode || "draftOnly";
   s.citiesPerTeam = s.citiesPerTeam || 1;
   if(s.budgetOn===undefined) s.budgetOn = false;
@@ -900,6 +902,7 @@ let S = {
   cityOf: {},           // 武將dataIdx → 駐守城市編號
   skillOf: {},          // 瑜雲武將dataIdx → 選定特技（選定後不可改）
   picksPerTurn: 1,      // 一輪每隊選幾名武將
+  citiesPerTurn: 1,     // 一輪每隊選幾座城（先選城／同輪模式）
   phaseMode: "draftOnly", // merged=城與人同輪 | cityFirst=先選城再選秀 | draftOnly=只選秀
   citiesPerTeam: 1,     // 每隊城市數（merged / cityFirst）
   budgetOn: false,
@@ -943,15 +946,16 @@ function draftRounds(){ return Math.ceil(S.rosterSize / Math.max(1,S.picksPerTur
 function turnPlan(){
   const k = Math.max(1,S.picksPerTurn), dr = draftRounds(), cr = S.citiesPerTeam;
   const wantPick = r => Math.min((r+1)*k, S.rosterSize);
+  const cpt = Math.max(1, S.citiesPerTurn || 1);
   if(S.phaseMode==="cityFirst"){
     if(!S.cityPhaseDone){
-      // 開放式選城：蛇形/順序輪替，直到管理者按「完成選城」或無城可選
+      // 開放式選城：蛇形/順序輪替（每輪每隊 cpt 座），直到管理者按「完成選城」或無城可選
       const banned = S.bannedCities || [];
       const freeCities = CITIES.filter((_,c)=>cityOwner(c)<0 && !banned.includes(c)).length;
       if(freeCities > 0){
         for(let r=0; r<64; r++){
           for(const t of teamOrder(r))
-            if(S.teams[t].cities.length < r+1)
+            if(S.teams[t].cities.length < (r+1)*cpt)
               return {t, r, needCity:true, needPicks:0, phase:"city"};
         }
       }
@@ -962,10 +966,12 @@ function turnPlan(){
     return null;
   }
   if(S.phaseMode==="merged"){
-    const R = Math.max(cr, dr);
-    for(let r=0;r<R;r++) for(const t of teamOrder(r)){
-      const wc = Math.min(r+1, cr), wp = wantPick(Math.min(r, dr-1));
-      const nc = S.teams[t].cities.length < wc, np = Math.max(0, (r<dr? wp:0) - S.teams[t].picks.length);
+    // 同輪選城＋選秀：每輪皆需 cpt 座城（累進制），直到無城可選；武將照輪次額度
+    const banned = S.bannedCities || [];
+    const freeCities = CITIES.filter((_,c)=>cityOwner(c)<0 && !banned.includes(c)).length;
+    for(let r=0;r<dr;r++) for(const t of teamOrder(r)){
+      const nc = freeCities>0 && S.teams[t].cities.length < (r+1)*cpt;
+      const np = Math.max(0, wantPick(r) - S.teams[t].picks.length);
       if(nc || np>0) return {t, r, needCity:nc, needPicks:np, phase:"merged"};
     }
     return null;
@@ -1517,7 +1523,7 @@ function commitDraft(i, skill){
     ns.redo = [];
     addLog(ns, `${tm.name} 選走 ${DATA[i][0]}${skill?"["+skill+"]":""}`);
     netDraft(ns, S.history.length, `${tm.name}　選走　${DATA[i][0]}${skill?"（"+skill+"）":""}`);
-    tgNotifyTurn(t, `已選了 ${DATA[i][0]}${skill?"["+skill+"]":""}`);
+    tgQueue(t, `${DATA[i][0]}${skill?"["+skill+"]":""}`);
     return;
   }
   tm.picks.push(i);
@@ -1603,7 +1609,7 @@ function pickCity(c){
     ns.redo = [];
     addLog(ns, `${S.teams[act].name} 取得 ${CITIES[c][0]}`);
     netDraft(ns, S.history.length, `${S.teams[act].name}　取得　${CITIES[c][0]}`);
-    tgNotifyTurn(act, `已選了 ${CITIES[c][0]}城`);
+    tgQueue(act, `${CITIES[c][0]}城`);
     return;
   }
   tm.cities.push(c);
@@ -1667,7 +1673,7 @@ function renderSettingsTeamNames(){
 }
 $("#btnSettings").addEventListener("click",()=>{
   $("#sTeams").value = S.teams.length; $("#sRoster").value = S.rosterSize;
-  $("#sPerTurn").value = S.picksPerTurn; $("#sPhase").value = S.phaseMode;
+  $("#sPerTurn").value = S.picksPerTurn; $("#sCityPer").value = S.citiesPerTurn || 1; $("#sPhase").value = S.phaseMode;
   $("#sCities").value = S.citiesPerTeam; $("#sBudgetOn").checked = S.budgetOn; $("#sBudget").value = S.budget;
   $("#sTgNotify").checked = S.tgNotify !== false;
   document.querySelectorAll('input[name=mode]').forEach(r=>r.checked = (r.value===S.mode));
@@ -1691,6 +1697,7 @@ function applySettings(){
   $("#teamnames").querySelectorAll("input").forEach(el=>S.teams[+el.dataset.i].name = el.value||("隊"+(+el.dataset.i+1)));
   S.rosterSize    = Math.max(1, parseInt($("#sRoster").value,10)   || 15);
   S.picksPerTurn  = Math.max(1, parseInt($("#sPerTurn").value,10)  || 1);
+  S.citiesPerTurn = Math.max(1, parseInt($("#sCityPer").value,10) || 1);
   S.phaseMode     = $("#sPhase").value || "draftOnly";
   S.citiesPerTeam = Math.max(1, parseInt($("#sCities").value,10)   || 1);
   S.budgetOn      = $("#sBudgetOn").checked;
@@ -2210,10 +2217,39 @@ function turnLookahead(){
   finally{ S = backup; }
   return {t: p0.t, cities, picks};
 }
-/* 動作提交後呼叫：prevT=剛完成動作的隊、what=動作描述 */
+/* ── 通知聚合緩衝 ──
+   同一隊在同一手內的所有選擇（城＋武將，可能複數）累積成一則；
+   每個動作重設計時器，計時器到期時檢查回合是否已輪替：
+   已輪替 → 發送完整清單；未輪替（該隊還沒選完額度）→ 保留緩衝等下一動作。
+   單一計時器設計根絕「選第1名就搶跑發通知」與重複發送的競態。 */
+let tgBuf = null, tgTimer = null;
+function tgQueue(t, item){
+  if(!NET.on) return;
+  if(!tgBuf || tgBuf.t !== t) tgBuf = {t, items: []};
+  tgBuf.items.push(item);
+  clearTimeout(tgTimer);
+  tgTimer = setTimeout(tgFlush, 900);
+}
+function tgFlush(){
+  if(!tgBuf || !tgBuf.items.length) return;
+  const la = turnLookahead();
+  const picked = tgBuf.items.join("、");
+  if(la === null){
+    tgSend(`${tgNameOf(tgBuf.t)} 已選 ${picked}。選秀全部完成！`);
+    tgBuf = null;
+  }else if(la.t !== tgBuf.t){
+    const need = [];
+    if(la.cities) need.push(la.cities > 1 ? `選 ${la.cities} 座城` : "選城");
+    if(la.picks) need.push(`選 ${la.picks} 名武將`);
+    tgSend(`${tgNameOf(tgBuf.t)} 已選 ${picked}，輪到 ${tgNameOf(la.t)}（${need.join("＋")}）`);
+    tgBuf = null;
+  }
+  // la.t === tgBuf.t：該隊尚未選完這一手 → 保留緩衝，等下一動作再排程
+}
+/* 舊介面保留給階段性事件（選城結束等單發訊息） */
 function tgNotifyTurn(prevT, what){
   if(!NET.on) return;
-  setTimeout(()=>{                       // 等監聽套用最新狀態再取下一位
+  setTimeout(()=>{
     const la = turnLookahead();
     if(la === null){
       tgSend(`${tgNameOf(prevT)} ${what}。選秀全部完成！`);
@@ -2671,6 +2707,7 @@ if(location.protocol === "file:"){
   if(!S.cityOf) S.cityOf = {};
   if(!S.skillOf) S.skillOf = {};
   if(!S.picksPerTurn) S.picksPerTurn = 1;
+  if(!S.citiesPerTurn) S.citiesPerTurn = 1;
   if(!S.phaseMode) S.phaseMode = "draftOnly";
   if(!S.citiesPerTeam) S.citiesPerTeam = 1;
   if(S.budgetOn===undefined) S.budgetOn = false;
