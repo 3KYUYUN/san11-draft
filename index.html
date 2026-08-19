@@ -502,7 +502,9 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
     <p class="note" style="margin-top:2px">在別的裝置輸入同一組玩家代碼＋加入同一房間，座位就會跟著你。</p>
     <div class="drow" style="margin-top:10px">
       <div>
-        <button class="btn seal" id="rmCreate" style="width:100%">建立房間（主持人）</button>
+        <label>房名／劇本名（選填）</label>
+        <input type="text" id="rmLabel" maxlength="24" placeholder="例：魚鴨選城二分天下">
+        <button class="btn seal" id="rmCreate" style="width:100%;margin-top:6px">建立房間（主持人）</button>
         <p class="note">建立後會得到房間碼與主持金鑰，只把房間碼給你授權的玩家。</p>
         <div id="roomListOff"></div>
       </div>
@@ -515,6 +517,8 @@ dialog textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-h
     </div>
   </div>
   <div id="roomOnline" style="display:none">
+    <p class="note">房名：<b id="rmLabelShow" style="color:var(--gold-bright);font-size:15px"></b>
+      <button class="btn" id="rmRename" style="padding:2px 8px;font-size:12px">改名</button></p>
     <p class="note">房間碼：<b id="rmShow" style="color:var(--gold-bright);font-size:16px;letter-spacing:2px"></b>
       <button class="btn" id="rmCopy" style="padding:2px 8px;font-size:12px">複製</button></p>
     <p class="note" id="rmRole"></p>
@@ -645,7 +649,7 @@ const FLAG_COLORS = ["#2b29d2", "#3a7211", "#ba0928", "#836535", "#1c0360", "#58
 const DUP_NAMES = (()=>{const c={};DATA.forEach(o=>c[o[0]]=(c[o[0]]||0)+1);return new Set(Object.keys(c).filter(n=>c[n]>1));})();
 
 /* ══ 連線層 ══ */
-const NET = { on:false, db:null, room:null, isHost:false, myName:"", seats:{}, admins:{}, presence:{}, applyingRemote:false };
+const NET = { on:false, db:null, room:null, label:"", isHost:false, myName:"", seats:{}, admins:{}, presence:{}, applyingRemote:false };
 function isAdminMe(){ return !!NET.admins[CID]; }
 function isPriv(){ return !NET.on || NET.isHost || isAdminMe(); }
 let CID = (()=>{ try{
@@ -773,12 +777,17 @@ async function netConnect(){
 }
 
 function attachRoom(room){
-  // 進房即補登索引（transaction：已存在則不動；修復舊規則時期漏登的房間）
-  try{
-    NET.db.ref("roomsIndex/"+room).transaction(v => v || {label: room, created: Date.now()});
-  }catch(e){}
-
-  NET.room = room; NET.on = true;
+  NET.room = room; NET.on = true; NET.label = "";
+  // 房名：以 meta 為準，即時同步給所有人；順帶補登／修正索引裡的房名
+  NET.db.ref("rooms/"+room+"/meta/label").on("value", snap=>{
+    NET.label = snap.val() || "";
+    const el = $("#rmLabelShow"); if(el) el.textContent = NET.label || "（未命名）";
+    try{
+      NET.db.ref("roomsIndex/"+room).transaction(v =>
+        v ? (v.label === (NET.label || room) ? v : {...v, label: NET.label || room})
+          : {label: NET.label || room, created: Date.now()});
+    }catch(e){}
+  });
   NET.db.ref("rooms/"+room+"/state").on("value", snap=>{
     const v = snap.val();
     if(v){ NET.applyingRemote = true; S = normalizeState(v); NET.applyingRemote = false; }
@@ -834,7 +843,7 @@ async function createRoom(){
   const room = randCode(8), hostKey = randCode(10);
   NET.isHost = true;
   try{ localStorage.setItem("s11hostkey-"+room, hostKey); }catch(e){}
-  const label = (NET.myName || "主持人") + "的房間";
+  const label = ($("#rmLabel").value || "").trim().slice(0,24) || ((NET.myName || "主持人") + "的房間");
   await NET.db.ref("rooms/"+room).set({
     meta: { hostHash: djb2(hostKey), created: Date.now(), label },
     state: packState(),
@@ -2156,11 +2165,11 @@ async function tgTest(){
     let resp;
     if(TG.proxy){
       resp = await fetch(TG.proxy, {method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({text:"🔔 選秀網頁測試通知（"+label+"）", room: NET.room||"測試"})});
+        body: JSON.stringify({text: tgPrefix()+"🔔 選秀網頁測試通知（"+label+"）", room: NET.room||"測試"})});
     }else{
       resp = await fetch("https://api.telegram.org/bot"+TG.token+"/sendMessage", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({chat_id: TG.chat, text:"🔔 選秀網頁測試通知（"+label+"）"})});
+        body: JSON.stringify({chat_id: TG.chat, text: tgPrefix()+"🔔 選秀網頁測試通知（"+label+"）"})});
     }
     if(resp.ok){
       toast("✓ 測試通知已送出（"+label+"），到 Telegram 群組確認");
@@ -2170,17 +2179,23 @@ async function tgTest(){
     }
   }catch(e){ toast("✗ 連線失敗：" + e.message); }
 }
+/* 房名前綴：多房並行時，群組訊息一眼可辨是哪一場 */
+function tgPrefix(){
+  const name = (NET.label || "").trim();
+  return name ? `【${name}】` : (NET.room ? `【${NET.room}】` : "");
+}
 function tgSend(text){
   if(S.tgNotify===false) return;
+  const msg = tgPrefix() + text;
   if(TG.proxy){
     fetch(TG.proxy, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({text, room: NET.room||""}),
+      body: JSON.stringify({text: msg, room: NET.room||""}),
     }).catch(()=>{});
   }else if(TG.token && TG.chat){
     fetch("https://api.telegram.org/bot"+TG.token+"/sendMessage", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({chat_id: TG.chat, text}),
+      body: JSON.stringify({chat_id: TG.chat, text: msg}),
     }).catch(()=>{});
   }
 }
@@ -2246,6 +2261,18 @@ function tgFlush(){
   }
   // la.t === tgBuf.t：該隊尚未選完這一手 → 保留緩衝，等下一動作再排程
 }
+function renameRoom(){
+  if(!NET.on){ toast("尚未進入房間"); return; }
+  if(!(NET.isHost || isAdminMe())){ toast("只有主持人／管理員可以改房名"); return; }
+  const cur = NET.label || "";
+  const v = prompt("房名／劇本名（最多 24 字）", cur);
+  if(v === null) return;
+  const label = v.trim().slice(0,24);
+  if(!label){ toast("房名不可空白"); return; }
+  NET.db.ref("rooms/"+NET.room+"/meta/label").set(label)
+    .then(()=>toast("房名已改為："+label))
+    .catch(e=>toast("改名失敗："+(e.code||e.message)));
+}
 /* 舊介面保留給階段性事件（選城結束等單發訊息） */
 function tgNotifyTurn(prevT, what){
   if(!NET.on) return;
@@ -2290,9 +2317,10 @@ async function showRoomList(targetId){
   const fmt = ts => ts? new Date(ts).toLocaleDateString("zh-TW",{month:"numeric",day:"numeric"}) : "";
   box.innerHTML = `<p class="note" style="margin-bottom:4px">房間列表：</p>` + rooms.map(r=>{
     const cur = r===NET.room, joined = mine.includes(r);
+    const nm = idx[r].label || "（未命名）";
     return `<div style="display:flex;align-items:center;gap:6px;font-size:13px;padding:3px 0">
-      <b style="letter-spacing:1px">${esc(r)}</b>
-      <span style="color:var(--text-dim)">${esc(idx[r].label||"")}・${fmt(idx[r].created)}</span>
+      <b style="color:var(--gold-bright)">${esc(nm)}</b>
+      <span style="color:var(--text-dim);letter-spacing:1px">${esc(r)}・${fmt(idx[r].created)}</span>
       ${joined?'<span class="badge c">加入過</span>':''}
       <span style="flex:1"></span>
       ${cur? '<span style="color:var(--gold)">目前所在</span>' :
@@ -2303,10 +2331,10 @@ async function showRoomList(targetId){
 }
 function detachRoom(){
   if(!NET.on) return;
-  ["state","seats","admins","presence","chat"].forEach(k=>NET.db.ref("rooms/"+NET.room+"/"+k).off());
+  ["state","seats","admins","presence","chat","meta/label"].forEach(k=>NET.db.ref("rooms/"+NET.room+"/"+k).off());
   NET.db.ref("rooms/"+NET.room+"/presence/"+CID).remove();
   if(NET._hb){ clearInterval(NET._hb); NET._hb = null; }
-  NET.on = false; NET.room = null; NET.isHost = false; NET.seats = {}; NET.admins = {}; NET.presence = {};
+  NET.on = false; NET.room = null; NET.label = ""; NET.isHost = false; NET.seats = {}; NET.admins = {}; NET.presence = {};
 }
 async function switchRoom(room){
   if(!await netConnect()) return;
@@ -2328,6 +2356,7 @@ $("#btnRoom").addEventListener("click",()=>{
   }catch(e){}
   openDlg("dlgRoom");
 });
+$("#rmRename").addEventListener("click", renameRoom);
 $("#rmCreate").addEventListener("click",()=>{ try{localStorage.setItem("s11name",$("#rmName").value.trim());}catch(e){} setPlayerCode($("#rmCode2").value); createRoom(); });
 $("#rmJoin").addEventListener("click",()=>{ try{localStorage.setItem("s11name",$("#rmName").value.trim());}catch(e){} setPlayerCode($("#rmCode2").value); joinRoom(); });
 $("#rmLeave").addEventListener("click",()=>{ leaveRoom(); closeDlg("dlgRoom"); });
